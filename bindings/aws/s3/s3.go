@@ -157,6 +157,7 @@ func (s *AWSS3) Operations() []bindings.OperationKind {
 		bindings.GetOperation,
 		bindings.DeleteOperation,
 		bindings.ListOperation,
+		bindings.CopyOperation,
 		presignOperation,
 	}
 }
@@ -389,6 +390,39 @@ func (s *AWSS3) list(ctx context.Context, req *bindings.InvokeRequest) (*binding
 	}, nil
 }
 
+func (s *AWSS3) copy(ctx context.Context, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error) {
+	metadata, err := s.metadata.mergeWithRequestMetadata(req)
+	if err != nil {
+		return nil, fmt.Errorf("s3 binding error: error merging metadata: %w", err)
+	}
+
+	sourceKey := req.Metadata["sourceKey"]
+	if sourceKey == "" {
+		return nil, fmt.Errorf("s3 binding error: required metadata 'sourceKey' missing")
+	}
+
+	destinationKey := req.Metadata["destinationKey"]
+	if destinationKey == "" {
+		return nil, fmt.Errorf("s3 binding error: required metadata 'destinationKey' missing")
+	}
+
+	_, err = s.s3Client.CopyObjectWithContext(ctx, &s3.CopyObjectInput{
+		Bucket:     ptr.Of(metadata.Bucket),
+		CopySource: ptr.Of(fmt.Sprintf("%s/%s", metadata.Bucket, sourceKey)),
+		Key:        ptr.Of(destinationKey),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3 binding error: copy operation failed: %w", err)
+	}
+
+	return &bindings.InvokeResponse{
+		Metadata: map[string]string{
+			"sourceKey":      sourceKey,
+			"destinationKey": destinationKey,
+		},
+	}, nil
+}
+
 func (s *AWSS3) Invoke(ctx context.Context, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error) {
 	switch req.Operation {
 	case bindings.CreateOperation:
@@ -399,6 +433,8 @@ func (s *AWSS3) Invoke(ctx context.Context, req *bindings.InvokeRequest) (*bindi
 		return s.delete(ctx, req)
 	case bindings.ListOperation:
 		return s.list(ctx, req)
+	case bindings.CopyOperation:
+		return s.copy(ctx, req)
 	case presignOperation:
 		return s.presign(ctx, req)
 	default:
